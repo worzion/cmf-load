@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CMF Watch Pro 2 — Stock OTA Flasher (Android Chrome)</title>
+<style>
+  :root {
+    --bg: #000000;
+    --surface: #1E2126;
+    --surface-hi: #2B2F36;
+    --accent: #E83C18;
+    --text: #FFFFFF;
+    --dim: #8E9299;
+    --ok: #2ED54A;
+    --warn: #F5A623;
+  }
+  * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex; justify-content: center; padding: 16px; }
+  .app { width: 100%; max-width: 540px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 16px; line-height: 1.4; }
+  .card { background: var(--surface); border-radius: 22px; padding: 16px; margin-bottom: 12px; }
+  .card-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button {
+    border: none; border-radius: 999px; padding: 12px 18px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: opacity .15s;
+  }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-light { background: #F2F2F2; color: #141619; }
+  .btn-accent { background: var(--accent); color: #FFF; }
+  .btn-dark { background: var(--surface-hi); color: #FFF; }
+  input[type="file"], input[type="text"] {
+    width: 100%; background: var(--surface-hi); color: #FFF; border: 1px solid #3A3E45;
+    border-radius: 14px; padding: 10px 12px; font-size: 13px; margin-top: 6px;
+  }
+  .badge { padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--surface-hi); color: var(--dim); }
+  .badge.ok { background: rgba(46,213,74,.18); color: var(--ok); }
+  .badge.warn { background: rgba(245,166,35,.18); color: var(--warn); }
+  .meta { font-size: 12px; color: var(--dim); margin-top: 8px; word-break: break-all; line-height: 1.45; }
+  .progress-wrap { height: 10px; background: var(--surface-hi); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+  .progress-bar { height: 100%; width: 0%; background: var(--accent); transition: width .12s; }
+  .log {
+    background: #0B0D10; border-radius: 16px; padding: 12px; font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 11.5px; color: #C8CFD8; max-height: 230px; overflow-y: auto; white-space: pre-wrap; margin-top: 10px;
+  }
+  .warn-box { background: rgba(232,60,24,.12); border: 1px solid rgba(232,60,24,.35); border-radius: 16px; padding: 12px; font-size: 12.5px; color: #FFD7CE; margin-bottom: 12px; line-height: 1.45; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>CMF Watch Pro 2 · Stock OTA Flasher</h1>
+  <div class="sub">Прошивка по протоколу Nothing X / Stock OTA прямо из Chrome на Android (без ПК и без WinRT)</div>
+
+  <div id="btWarn" class="warn-box" style="display:none;">
+    Web Bluetooth недоступен на этой странице. Откройте файл в <b>Google Chrome на Android</b> по адресу <b>https://</b> или <b>http://localhost</b> (с <code>file://</code> Android Chrome блокирует Bluetooth).
+  </div>
+
+  <div class="card">
+    <div class="card-title">
+      <span>1. Подключение к часам</span>
+      <span id="statusBadge" class="badge">Не подключено</span>
+    </div>
+    <div class="row">
+      <button id="btnConnect" class="btn-light">Подключить CMF Watch</button>
+      <button id="btnPair" class="btn-dark" disabled>Авторизация (GETSECRET)</button>
+    </div>
+    <div class="meta">
+      AuthKey (32 hex, заполняется автоматически после GETSECRET или введите вручную для Reconnect):
+    </div>
+    <input id="authKeyInput" type="text" placeholder="32 hex символа (опционально)">
+  </div>
+
+  <div class="card">
+    <div class="card-title">
+      <span>2. Файл прошивки (.bin AOTA)</span>
+      <span id="fileBadge" class="badge">Не выбран</span>
+    </div>
+    <input id="fileInput" type="file" accept=".bin">
+    <div id="fileMeta" class="meta">Выберите <code>JX402_V1.0.0.73_custom_hub_ota_v2.1.bin</code> (или стоковый <code>JX402_V1.0.0.73.bin</code> для отката)</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">
+      <span>3. Проверка и прошивка</span>
+      <span id="pctLabel" class="badge">0%</span>
+    </div>
+    <div class="row">
+      <button id="btnDryRun" class="btn-dark" disabled>Пробный тест (Dry-Run)</button>
+      <button id="btnFlash" class="btn-accent" disabled>Прошить часы (OTA)</button>
+    </div>
+    <div class="progress-wrap"><div id="progBar" class="progress-bar"></div></div>
+    <div id="logBox" class="log">Готов. Закройте официальное приложение CMF Watch / Nothing X перед подключением.</div>
+  </div>
+</div>
+
+<script>
+// Exact verified GATT UUIDs from JX402_V1.0.0.73 app.bin & cmf-watch-utils
+const SVC_CMD = "0000fff0-0000-1000-8000-00805f9b34fb";
+const CHR_CMD_W = "0000fff2-0000-1000-8000-00805f9b34fb";
+const CHR_CMD_N = "0000fff1-0000-1000-8000-00805f9b34fb";
+
+const SVC_SH = "77d4e67c-2fe2-2334-0d35-9ccd078f529c";
+const CHR_SH_W = "77d4ff01-2fe2-2334-0d35-9ccd078f529c";
+const CHR_SH_N = "77d4ff02-2fe2-2334-0d35-9ccd078f529c";
+
+const SVC_OTA = "02f00000-0000-0000-0000-00000000fe00";
+const CHR_OTA_W = "02f00000-0000-0000-0000-00000000ff01";
+const CHR_OTA_N = "02f00000-0000-0000-0000-00000000ff02";
+
+const IV = hexToBytes("5051525354555657606162636465665A");
+const FRAME_MAGIC = 0xF5;
+const CHUNK_SIZE = 224;
+const OTA_VERSION_HEX = "0100005a";
+
+let device = null, server = null;
+let chCmdW = null, chCmdN = null, chShW = null, chShN = null, chOtaW = null, chOtaN = null;
+let authKey = null, sessionKey = null;
+let imgBytes = null;
+
+// Queues for BLE notifications
+const frameQueue = [];
+const frameWaiters = [];
+const shellQueue = [];
+const shellWaiters = [];
+let parseBuf = new Uint8Array(0);
+
+const logEl = document.getElementById("logBox");
+const progBar = document.getElementById("progBar");
+const pctLabel = document.getElementById("pctLabel");
+const statusBadge = document.getElementById("statusBadge");
+const fileBadge = document.getElementById("fileBadge");
+const authInput = document.getElementById("authKeyInput");
+
+if (!navigator.bluetooth) {
+  document.getElementById("btWarn").style.display = "block";
+}
+const savedKey = localStorage.getItem("cmf_wp2_authkey");
+if (savedKey && /^[0-9a-fA-F]{32}$/.test(savedKey)) {
+  authInput.value = savedKey;
+}
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `\n[${t}] ${msg}`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function hexToBytes(hex) {
+  hex = hex.replace(/\s+/g, "");
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+
+function bytesToHex(arr) {
+  return Array.from(arr, b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function concat(...arrays) {
+  let len = 0;
+  for (const a of arrays) len += a.length;
+  const out = new Uint8Array(len);
+  let off = 0;
+  for (const a of arrays) { out.set(a, off); off += a.length; }
+  return out;
+}
+
+// Standard IEEE CRC32 (little-endian 4 bytes)
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32Le(data) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
+  c = (c ^ 0xFFFFFFFF) >>> 0;
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, c, true);
+  return out;
+}
+
+async function sha256(data) {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+}
+
+async function aesEnc(keyBytes, data) {
+  const k = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["encrypt"]);
+  return new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv: IV }, k, data));
+}
+
+async function aesDec(keyBytes, data) {
+  // Raw AES-128-CBC without strict WebCrypto PKCS#7 validation (exact match to Python pycryptodome):
+  // Append an encrypted block of 16x0x10 using last ciphertext block as IV so WebCrypto always strips only our dummy block!
+  const kEnc = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["encrypt"]);
+  const kDec = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["decrypt"]);
+  const lastCt = data.slice(data.length - 16);
+  const dummyPad = new Uint8Array(16).fill(16);
+  const encDummy = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv: lastCt }, kEnc, dummyPad));
+  const rawPlain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-CBC", iv: IV }, kDec, concat(data, encDummy.slice(0, 16))));
+  // Strip pad byte just like cmf_watch.py: if 1 <= pad <= 16 -> slice(0, -pad)
+  if (rawPlain.length > 0) {
+    const pad = rawPlain[rawPlain.length - 1];
+    if (pad >= 1 && pad <= 16) return rawPlain.slice(0, rawPlain.length - pad);
+  }
+  return rawPlain;
+}
+
+async function buildFrame(cmd1, cmd2, payload = new Uint8Array(0), chunkIndex = 1, chunkCount = 1, key = null) {
+  let body = concat(payload, crc32Le(payload));
+  if (key) body = await aesEnc(key, body);
+  const hdr = new Uint8Array(11);
+  const dv = new DataView(hdr.buffer);
+  hdr[0] = FRAME_MAGIC;
+  dv.setUint16(1, body.length, false);
+  dv.setUint16(3, cmd1, false);
+  dv.setUint16(5, chunkCount, false);
+  dv.setUint16(7, chunkIndex, false);
+  dv.setUint16(9, cmd2, false);
+  return concat(hdr, body);
+}
+
+function feedFrames(chunk) {
+  parseBuf = concat(parseBuf, chunk);
+  while (parseBuf.length >= 11) {
+    if (parseBuf[0] !== FRAME_MAGIC) {
+      const idx = parseBuf.indexOf(FRAME_MAGIC);
+      if (idx < 0) { parseBuf = new Uint8Array(0); break; }
+      parseBuf = parseBuf.slice(idx);
+      if (parseBuf.length < 11) break;
+    }
+    const dv = new DataView(parseBuf.buffer, parseBuf.byteOffset, parseBuf.byteLength);
+    const chunkLen = dv.getUint16(1, false);
+    const cmd1 = dv.getUint16(3, false);
+    const chunkCount = dv.getUint16(5, false);
+    const chunkIndex = dv.getUint16(7, false);
+    const cmd2 = dv.getUint16(9, false);
+    const enc = chunkLen > 0 && (chunkLen % 16 === 0);
+    let bodyLen = chunkLen;
+    let total = 11 + bodyLen;
+    if (parseBuf.length < total) {
+      if (!enc && chunkLen >= 4 && parseBuf.length >= total - 4) {
+        bodyLen = chunkLen - 4;
+        total = 11 + bodyLen;
+      } else {
+        break;
+      }
+    }
+    const body = parseBuf.slice(11, total);
+    parseBuf = parseBuf.slice(total);
+    const item = { cmd1, cmd2, chunkCount, chunkIndex, body, enc };
+    if (frameWaiters.length > 0) frameWaiters.shift()(item);
+    else frameQueue.push(item);
+  }
+}
+
+function nextFrame(timeoutMs = 6000) {
+  if (frameQueue.length > 0) return Promise.resolve(frameQueue.shift());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const i = frameWaiters.indexOf(onItem);
+      if (i >= 0) frameWaiters.splice(i, 1);
+      reject(new Error("Таймаут ожидания ответа от часов"));
+    }, timeoutMs);
+    function onItem(item) { clearTimeout(timer); resolve(item); }
+    frameWaiters.push(onItem);
+  });
+}
+
+async function decodeFrame(f, key) {
+  if (!f.enc || !key || f.body.length === 0) return f.body;
+  try {
+    const dec = await aesDec(key, f.body);
+    if (dec.length >= 4) {
+      const data = dec.slice(0, dec.length - 4);
+      const crc = dec.slice(dec.length - 4);
+      if (bytesToHex(crc32Le(data)) === bytesToHex(crc)) return data;
+    }
+    return dec;
+  } catch (e) {
+    return f.body;
+  }
+}
+
+async function waitCmd(expectedCmd2, key, timeoutMs = 6000) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const f = await nextFrame(Math.max(100, end - Date.now()));
+    const dec = await decodeFrame(f, key);
+    if (f.cmd2 === expectedCmd2) return dec;
+  }
+  throw new Error(`Нет ответа 0x${expectedCmd2.toString(16)}`);
+}
+
+async function sendAt(cmd, timeoutMs = 6000) {
+  shellQueue.length = 0;
+  const enc = new TextEncoder().encode(cmd + "\r\n");
+  await chShW.writeValueWithResponse(enc);
+  let acc = "";
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const chunk = await new Promise((resolve, reject) => {
+      if (shellQueue.length > 0) return resolve(shellQueue.shift());
+      const t = setTimeout(() => reject(new Error("Таймаут AT shell")), Math.max(100, end - Date.now()));
+      shellWaiters.push(v => { clearTimeout(t); resolve(v); });
+    });
+    acc += new TextDecoder("latin1").decode(chunk);
+    if (acc.includes("OK") || acc.includes("ERROR")) break;
+  }
+  return acc;
+}
+
+async function writeChar(ch, data, withResponse = true) {
+  if (withResponse) await ch.writeValueWithResponse(data);
+  else if (ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(data);
+  else await ch.writeValueWithResponse(data);
+}
+
+function updateButtons() {
+  const ready = !!(sessionKey && imgBytes && device && device.gatt.connected);
+  document.getElementById("btnDryRun").disabled = !ready;
+  document.getElementById("btnFlash").disabled = !ready;
+}
+
+document.getElementById("btnConnect").onclick = async () => {
+  try {
+    log("Поиск CMF Watch Pro 2...");
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [SVC_CMD, SVC_SH, SVC_OTA]
+    });
+    log(`Подключение к ${device.name || device.id}...`);
+    server = await device.gatt.connect();
+
+    const sCmd = await server.getPrimaryService(SVC_CMD);
+    chCmdW = await sCmd.getCharacteristic(CHR_CMD_W);
+    chCmdN = await sCmd.getCharacteristic(CHR_CMD_N);
+    await chCmdN.startNotifications();
+    chCmdN.addEventListener("characteristicvaluechanged", e => feedFrames(new Uint8Array(e.target.value.buffer)));
+
+    try {
+      const sSh = await server.getPrimaryService(SVC_SH);
+      chShW = await sSh.getCharacteristic(CHR_SH_W);
+      chShN = await sSh.getCharacteristic(CHR_SH_N);
+      await chShN.startNotifications();
+      chShN.addEventListener("characteristicvaluechanged", e => {
+        const b = new Uint8Array(e.target.value.buffer);
+        if (shellWaiters.length > 0) shellWaiters.shift()(b);
+        else shellQueue.push(b);
+      });
+    } catch (e) {
+      log("Предупреждение: AT Shell сервис не найден (можно использовать сохранённый AuthKey).");
+    }
+
+    const sOta = await server.getPrimaryService(SVC_OTA);
+    chOtaW = await sOta.getCharacteristic(CHR_OTA_W);
+    chOtaN = await sOta.getCharacteristic(CHR_OTA_N);
+    await chOtaN.startNotifications();
+    chOtaN.addEventListener("characteristicvaluechanged", e => feedFrames(new Uint8Array(e.target.value.buffer)));
+
+    statusBadge.textContent = "Подключено (нужна авторизация)";
+    statusBadge.className = "badge warn";
+    document.getElementById("btnPair").disabled = false;
+    log("GATT-каналы (CMD, SHELL, OTA) открыты! Нажмите «Авторизация (GETSECRET)».");
+  } catch (e) {
+    log("Ошибка подключения: " + e.message);
+  }
+};
+
+document.getElementById("btnPair").onclick = async () => {
+  try {
+    frameQueue.length = 0;
+    const manualHex = authInput.value.trim();
+    if (/^[0-9a-fA-F]{32}$/.test(manualHex)) {
+      authKey = hexToBytes(manualHex);
+      log("Использую указанный AuthKey: " + manualHex);
+    } else {
+      if (!chShW) throw new Error("Нет доступа к AT Shell; введите AuthKey вручную.");
+      log("Запрос секрета часов (AT GETSECRET)...");
+      const resp = await sendAt("AT GETSECRET");
+      log("Ответ AT: " + resp.trim());
+      if (!resp.includes("OK")) throw new Error("Часы не отдали секрет");
+      const secretHex = resp.split("GETSECRET:").pop().split(",")[0].trim();
+      const secret = hexToBytes(secretHex);
+
+      const rnd1 = crypto.getRandomValues(new Uint8Array(16));
+      const signed1 = await sha256(concat(rnd1, secret));
+      log("Отправка AUTH_PAIR_REQUEST (0x8047)...");
+      await writeChar(chCmdW, await buildFrame(0xFFFF, 0x8047, concat(rnd1, signed1), 1, 1, null), true);
+      const reply = await waitCmd(0x0048, null, 6000);
+      const rnd2 = reply.slice(0, 16);
+      const signed2 = reply.slice(16, 48);
+      const check2 = await sha256(concat(rnd2, secret));
+      if (bytesToHex(signed2) !== bytesToHex(check2)) throw new Error("Неверная подпись часов");
+
+      authKey = (await sha256(concat(rnd1, rnd2, secret))).slice(0, 16);
+      authInput.value = bytesToHex(authKey);
+      localStorage.setItem("cmf_wp2_authkey", bytesToHex(authKey));
+      log("AuthKey получен и сохранён: " + bytesToHex(authKey));
+    }
+
+    // Reconnect / Session key derivation (0x8049 -> 0x804B -> 0x804D -> 0x8004)
+    const phoneModel = concat(new Uint8Array([0xA5]), new TextEncoder().encode("CMF Watch Pro 2"));
+    await writeChar(chCmdW, await buildFrame(0xFFFF, 0x8049, phoneModel, 1, 1, authKey), true);
+    await waitCmd(0x0049, authKey, 5000);
+
+    await writeChar(chCmdW, await buildFrame(0xFFFF, 0x804B, new Uint8Array([0xA5]), 1, 1, authKey), true);
+    const nonce = await waitCmd(0x004C, authKey, 5000);
+    sessionKey = (await sha256(concat(nonce.slice(0, 16), authKey))).slice(0, 16);
+    log("Сессионный ключ AES установлен: " + bytesToHex(sessionKey));
+
+    await writeChar(chCmdW, await buildFrame(0xFFFF, 0x804D, new Uint8Array([0xA5]), 1, 1, sessionKey), true);
+    await waitCmd(0x0004, sessionKey, 5000);
+
+    // Sync time (0x8004)
+    const timePayload = new Uint8Array(8);
+    const tdv = new DataView(timePayload.buffer);
+    tdv.setInt32(0, Math.floor(Date.now() / 1000), false);
+    tdv.setInt32(4, -new Date().getTimezoneOffset() * 60000, false);
+    await writeChar(chCmdW, await buildFrame(0xFFFF, 0x8004, timePayload, 1, 1, sessionKey), true);
+
+    statusBadge.textContent = "Авторизовано · Готово к OTA";
+    statusBadge.className = "badge ok";
+    log("Авторизация успешно завершена! Можно запускать Dry-Run или прошивку.");
+    updateButtons();
+  } catch (e) {
+    log("Ошибка авторизации: " + e.message);
+  }
+};
+
+document.getElementById("fileInput").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const magic = new TextDecoder().decode(buf.slice(0, 4));
+  const hash = bytesToHex(await sha256(buf));
+  if (magic !== "AOTA") {
+    fileBadge.textContent = "Ошибка формата";
+    fileBadge.className = "badge warn";
+    document.getElementById("fileMeta").textContent = `Файл не является AOTA (заголовок "${magic}"). Выберите JX402_V1.0.0.73_custom_hub_ota_v2.1.bin.`;
+    imgBytes = null;
+    updateButtons();
+    return;
+  }
+  imgBytes = buf;
+  fileBadge.textContent = `${(buf.length / 1024).toFixed(1)} КБ`;
+  fileBadge.className = "badge ok";
+  document.getElementById("fileMeta").textContent = `Файл: ${file.name} (${buf.length} Б)\nSHA-256: ${hash}`;
+  log(`Загружен AOTA-образ ${file.name}, SHA-256=${hash.slice(0, 16)}...`);
+  updateButtons();
+};
+
+async function runOta(dryRun) {
+  try {
+    document.getElementById("btnDryRun").disabled = true;
+    document.getElementById("btnFlash").disabled = true;
+    progBar.style.width = "0%";
+    pctLabel.textContent = "0%";
+    frameQueue.length = 0;
+
+    log("Отправка INIT1 (0x9052)...");
+    await writeChar(chCmdW, await buildFrame(0xFFFF, 0x9052, new Uint8Array([0xA5]), 1, 1, sessionKey), true);
+    try {
+      await waitCmd(0xA052, sessionKey, 6000);
+    } catch {
+      log("Повтор INIT1 на OTA-характеристике...");
+      await writeChar(chOtaW, await buildFrame(0xFFFF, 0x9052, new Uint8Array([0xA5]), 1, 1, sessionKey), false);
+      await waitCmd(0xA052, sessionKey, 6000);
+    }
+    log("Получен 0xA052 (часы готовы к OTA)!");
+
+    if (dryRun) {
+      log("Dry-Run успешно завершён! Данные не записывались. Можно нажимать «Прошить часы (OTA)».");
+      updateButtons();
+      return;
+    }
+
+    log(`Отправка INIT2 (0x9040, version=${OTA_VERSION_HEX})...`);
+    const verBytes = hexToBytes(OTA_VERSION_HEX);
+    await writeChar(chOtaW, await buildFrame(0xFFFF, 0x9040, verBytes, 1, 1, sessionKey), false);
+    try {
+      await waitCmd(0xA040, sessionKey, 5000);
+    } catch {
+      await writeChar(chCmdW, await buildFrame(0xFFFF, 0x9040, verBytes, 1, 1, sessionKey), true);
+      await waitCmd(0xA040, sessionKey, 5000);
+    }
+    log("Получен 0xA040 — началась передача прошивки! Не выключайте экран телефона.");
+
+    let servedBytes = 0;
+    const tStart = Date.now();
+    while (true) {
+      const f = await nextFrame(60000);
+      const dec = await decodeFrame(f, sessionKey);
+      if (f.cmd2 === 0xA042) {
+        if (dec.length < 8) continue;
+        const dv = new DataView(dec.buffer, dec.byteOffset, dec.byteLength);
+        const off = dv.getUint32(0, false);
+        const len = dv.getUint32(4, false);
+        if (off === 0 && len === 0) {
+          log(`Запрос завершения (0/0). Передано ${servedBytes} Б. Отправка END (0x9041)...`);
+          await writeChar(chCmdW, await buildFrame(0xFFFF, 0x9041, new Uint8Array([0xA5]), 1, 1, sessionKey), true);
+          break;
+        }
+        if (off >= imgBytes.length || len === 0) {
+          log(`Пропуск некорректного запроса 0xA042: off=0x${off.toString(16)} len=${len} (raw=${bytesToHex(dec)})`);
+          continue;
+        }
+        const end = Math.min(off + len, imgBytes.length);
+        const count = Math.max(1, Math.ceil((end - off) / CHUNK_SIZE));
+        let idx = 0;
+        for (let pos = off; pos < end; pos += CHUNK_SIZE) {
+          idx++;
+          const piece = imgBytes.slice(pos, Math.min(pos + CHUNK_SIZE, end));
+          const pkt = await buildFrame(0xFFFF, 0x9042, piece, idx, count, null);
+          await writeChar(chOtaW, pkt, false);
+          if (idx % 4 === 0) await new Promise(r => setTimeout(r, 8));
+        }
+        servedBytes += (end - off);
+        const pct = Math.min(100, Math.round((servedBytes / imgBytes.length) * 100));
+        progBar.style.width = pct + "%";
+        pctLabel.textContent = pct + "%";
+        const kbps = (servedBytes / 1024 / Math.max(0.1, (Date.now() - tStart) / 1000)).toFixed(1);
+        log(`Блок off=0x${off.toString(16)} (+${end - off} Б) · ${(servedBytes/1024).toFixed(0)}/${(imgBytes.length/1024).toFixed(0)} КБ (${pct}%, ${kbps} КБ/с)`);
+      } else if (f.cmd2 === 0xA041) {
+        log(`Статус часов 0xA041: ${bytesToHex(dec)}. Отправка END (0x9041)...`);
+        await writeChar(chCmdW, await buildFrame(0xFFFF, 0x9041, new Uint8Array([0xA5]), 1, 1, sessionKey), true);
+        break;
+      } else if (f.cmd2 === 0xA043 || f.cmd2 === 0xA044) {
+        log(`Статус часов 0x${f.cmd2.toString(16)}: ${bytesToHex(dec)}`);
+        break;
+      }
+    }
+
+    log("Ожидание финальной проверки на часах (до 15 сек)...");
+    try {
+      const st = await waitCmd(0xA041, sessionKey, 15000);
+      log(`УСПЕХ! Часы подтвердили образ (0xA041=${bytesToHex(st)}) и сейчас перезагрузятся.`);
+    } catch {
+      log("Передача завершена, часы применяют обновление и перезагружаются.");
+    }
+    progBar.style.width = "100%";
+    pctLabel.textContent = "100%";
+  } catch (e) {
+    log("ОШИБКА OTA: " + e.message);
+  } finally {
+    updateButtons();
+  }
+}
+
+document.getElementById("btnDryRun").onclick = () => runOta(true);
+document.getElementById("btnFlash").onclick = () => runOta(false);
+</script>
+</body>
+</html>
